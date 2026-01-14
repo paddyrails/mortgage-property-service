@@ -1,0 +1,66 @@
+name: 5. Remove from OpenShift
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, staging, prod]
+      confirm_delete:
+        description: 'Type "property-service" to confirm'
+        required: true
+
+env:
+  SERVICE_NAME: property-service
+  OPENSHIFT_NAMESPACE: mortgage-app
+
+jobs:
+  remove:
+    name: Remove from OpenShift
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_delete }}" != "${{ env.SERVICE_NAME }}" ]; then
+            echo "❌ Confirmation failed! Expected: ${{ env.SERVICE_NAME }}"
+            exit 1
+          fi
+
+      - name: Install OpenShift CLI
+        uses: redhat-actions/openshift-tools-installer@v1
+        with:
+          oc: "4.14"
+
+      - name: Login to OpenShift
+        uses: redhat-actions/oc-login@v1
+        with:
+          openshift_server_url: ${{ secrets.OPENSHIFT_SERVER }}
+          openshift_token: ${{ secrets.OPENSHIFT_TOKEN }}
+          insecure_skip_tls_verify: true
+          namespace: ${{ env.OPENSHIFT_NAMESPACE }}
+
+      - name: Scale down and delete
+        run: |
+          oc scale deployment/${{ env.SERVICE_NAME }} --replicas=0 -n ${{ env.OPENSHIFT_NAMESPACE }} || true
+          sleep 5
+          oc delete route ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} --ignore-not-found
+          oc delete service ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} --ignore-not-found
+          oc delete deployment ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} --ignore-not-found
+          oc delete configmap ${{ env.SERVICE_NAME }}-config -n ${{ env.OPENSHIFT_NAMESPACE }} --ignore-not-found
+
+      - name: Verify deletion
+        run: |
+          echo "🔍 Verifying deletion..."
+          oc get deployment ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null && echo "⚠️ Deployment exists" || echo "✅ Deployment removed"
+          oc get service ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null && echo "⚠️ Service exists" || echo "✅ Service removed"
+          oc get route ${{ env.SERVICE_NAME }} -n ${{ env.OPENSHIFT_NAMESPACE }} 2>/dev/null && echo "⚠️ Route exists" || echo "✅ Route removed"
+
+      - name: Summary
+        run: |
+          echo "## 🗑️ Removal Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Service: ${{ env.SERVICE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Namespace: ${{ env.OPENSHIFT_NAMESPACE }}" >> $GITHUB_STEP_SUMMARY
